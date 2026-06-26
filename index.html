@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>YugabyteDB Cluster Resiliency Simulator</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:           #ffffff;
+      --bg-sec:       #f5f5f4;
+      --bg-info:      #eff6ff;
+      --border:       #e7e5e4;
+      --border-sec:   #d6d3d1;
+      --text:         #1c1917;
+      --text-sec:     #57534e;
+      --text-ter:     #a8a29e;
+      --radius:       8px;
+      --radius-lg:    12px;
+      --font:         -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      padding: 1.5rem;
+      max-width: 1100px;
+      margin: 0 auto;
+      line-height: 1.5;
+    }
+
+    h1 {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    .subtitle {
+      font-size: 12px;
+      color: var(--text-sec);
+      margin-bottom: 1.5rem;
+    }
+
+    /* ── Controls ── */
+    .top-bar { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 1.25rem; align-items: center; }
+    .slabel  { font-size: 11px; color: var(--text-sec); margin-right: 4px; }
+
+    .rf-toggle { display: flex; border: 1px solid var(--border-sec); border-radius: var(--radius); overflow: hidden; }
+    .rf-btn {
+      padding: 6px 20px; font-size: 13px; font-weight: 500;
+      cursor: pointer; background: var(--bg); color: var(--text-sec); border: none;
+    }
+    .rf-btn:first-child { border-right: 1px solid var(--border-sec); }
+    .rf-btn.a3 { background: #eff6ff; color: #1e3a5f; }
+    .rf-btn.a5 { background: #f0fdf4; color: #14532d; }
+
+    .az-tabs { display: flex; gap: 6px; }
+    .az-tab {
+      padding: 5px 14px; font-size: 12px;
+      border: 1px solid var(--border-sec); border-radius: var(--radius);
+      cursor: pointer; background: var(--bg); color: var(--text-sec);
+    }
+    .az-tab.active {
+      background: var(--bg-sec); color: var(--text);
+      border-color: #a8a29e; font-weight: 500;
+    }
+
+    .az-cfg { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 1rem; align-items: flex-end; }
+    .az-cfg-card {
+      background: var(--bg-sec); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 8px 12px;
+    }
+    .az-cfg-label { font-size: 11px; color: var(--text-sec); margin-bottom: 5px; font-weight: 500; }
+    .az-cfg-card select, .top-bar select {
+      font-size: 12px; padding: 4px 8px; border-radius: 6px;
+      border: 1px solid var(--border-sec); background: var(--bg);
+      color: var(--text); cursor: pointer; min-width: 90px;
+    }
+    .total-card {
+      background: var(--bg-sec); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 8px 12px;
+    }
+
+    /* ── Placement note ── */
+    .placement-note {
+      font-size: 11px; background: var(--bg-sec);
+      border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 8px 12px; margin-bottom: 1rem;
+      color: var(--text-sec); line-height: 1.7;
+    }
+
+    /* ── Legend ── */
+    .legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 11px; color: var(--text-sec); margin-bottom: 1rem; }
+    .leg { display: flex; align-items: center; gap: 5px; }
+    .leg-box { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
+
+    /* ── Metrics row ── */
+    .metrics-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 8px; margin-bottom: 1rem; }
+    .met { background: var(--bg-sec); border-radius: var(--radius); padding: 8px 10px; border: 1px solid var(--border); }
+    .met-label { font-size: 10px; color: var(--text-sec); margin-bottom: 3px; }
+    .met-val   { font-size: 16px; font-weight: 500; }
+
+    /* ── Verdict ── */
+    .verdict { border-radius: var(--radius); padding: 10px 14px; font-size: 12px; line-height: 1.6; margin-bottom: 1rem; }
+    .v-ok   { background: #f0fdf4; color: #14532d; border: 1px solid #86efac; }
+    .v-warn { background: #fffbeb; color: #78350f; border: 1px solid #fcd34d; }
+    .v-dead { background: #fef2f2; color: #7f1d1d; border: 1px solid #fca5a5; }
+
+    /* ── Topology ── */
+    .topo { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 1rem; }
+    .az-col {
+      border: 1px solid var(--border-sec); border-radius: var(--radius);
+      padding: 10px 12px; background: var(--bg); flex: 1; min-width: 80px;
+    }
+    .az-col.az-dead { border-color: #f87171; background: #fef2f2; }
+    .az-col-title {
+      font-size: 11px; color: var(--text-sec); margin-bottom: 8px;
+      font-weight: 500; display: flex; justify-content: space-between; align-items: center;
+    }
+    .nodes-grid { display: flex; flex-wrap: wrap; gap: 5px; }
+    .node-pill {
+      width: 44px; height: 52px; border-radius: 6px;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 2px; cursor: pointer; position: relative; user-select: none;
+      font-size: 10px; font-weight: 500; transition: opacity 0.15s, transform 0.1s;
+    }
+    .node-pill:hover { transform: scale(1.05); }
+    .ts-alive { background: #f0fdf4; color: #14532d; border: 1.5px solid #4ade80; }
+    .ts-down  { background: #fef2f2; color: #7f1d1d; border: 1.5px solid #f87171; opacity: 0.6; }
+    .m-alive  { background: #eff6ff; color: #1e3a5f; border: 2.5px solid #3b82f6; }
+    .m-down   { background: #fef2f2; color: #7f1d1d; border: 2.5px solid #dc2626; opacity: 0.6; }
+    .m-moved  { background: #fffbeb; color: #451a03; border: 2.5px solid #f59e0b; }
+    .node-icon  { font-size: 13px; line-height: 1; }
+    .node-lbl   { font-size: 9px; line-height: 1; }
+    .node-tcount{ font-size: 8px; color: var(--text-ter); line-height: 1; }
+    .mbadge {
+      position: absolute; top: -5px; right: -5px;
+      font-size: 7px; border-radius: 2px; padding: 0 2px; line-height: 1.5; font-weight: 600;
+    }
+    .mbadge-orig  { background: #3b82f6; color: #eff6ff; }
+    .mbadge-moved { background: #f59e0b; color: #fffbeb; }
+
+    /* ── Impact summary ── */
+    .impact-summary-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px,1fr)); gap: 8px; margin-bottom: 1rem; }
+    .imp-met {
+      background: var(--bg-sec); border-radius: var(--radius);
+      padding: 8px 10px; border-left: 3px solid transparent; border: 1px solid var(--border);
+    }
+    .imp-met.i-ok    { border-left: 3px solid #22c55e; }
+    .imp-met.i-under { border-left: 3px solid #f59e0b; }
+    .imp-met.i-noldr { border-left: 3px solid #d97706; }
+    .imp-met.i-lost  { border-left: 3px solid #ef4444; }
+    .imp-met-label { font-size: 10px; color: var(--text-sec); margin-bottom: 2px; }
+    .imp-met-val   { font-size: 22px; font-weight: 600; }
+
+    /* ── Impact bars ── */
+    .impact-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 1rem; }
+    @media (max-width: 600px) { .impact-grid { grid-template-columns: 1fr; } }
+    .impact-card {
+      border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 10px 14px; background: var(--bg);
+    }
+    .impact-card-title { font-size: 12px; font-weight: 600; margin-bottom: 10px; }
+    .impact-bar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 11px; }
+    .impact-bar-label { min-width: 90px; color: var(--text-sec); }
+    .impact-bar-wrap { flex: 1; height: 10px; background: var(--bg-sec); border-radius: 5px; overflow: hidden; }
+    .impact-bar-fill { height: 100%; border-radius: 5px; transition: width 0.3s; }
+    .impact-count { min-width: 60px; text-align: right; font-weight: 500; font-size: 11px; }
+
+    /* ── Tablet groups ── */
+    .tg-section { margin-bottom: 1rem; }
+    .tg-title-row {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 8px; flex-wrap: wrap; gap: 8px;
+    }
+    .tg-controls { display: flex; gap: 5px; flex-wrap: wrap; }
+    .tg-filter-btn {
+      font-size: 11px; padding: 4px 12px; border-radius: 20px;
+      border: 1px solid var(--border-sec); background: var(--bg);
+      color: var(--text-sec); cursor: pointer;
+    }
+    .tg-filter-btn.active {
+      background: var(--bg-sec); font-weight: 500;
+      color: var(--text); border-color: #a8a29e;
+    }
+    .tg-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 8px; max-height: 480px; overflow-y: auto; padding-right: 2px;
+    }
+    .tg-card {
+      border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 8px 10px; background: var(--bg);
+    }
+    .tg-card.s-ok    { border-color: #4ade80; }
+    .tg-card.s-under { border-color: #fbbf24; }
+    .tg-card.s-noldr { border-color: #d97706; border-style: dashed; }
+    .tg-card.s-lost  { border-color: #f87171; }
+    .tg-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+    .tg-name { font-size: 11px; font-weight: 600; }
+    .tg-stag { font-size: 10px; padding: 2px 8px; border-radius: 8px; font-weight: 500; }
+    .stag-ok    { background: #f0fdf4; color: #14532d; }
+    .stag-under { background: #fffbeb; color: #78350f; }
+    .stag-noldr { background: #fffbeb; color: #78350f; }
+    .stag-lost  { background: #fef2f2; color: #7f1d1d; }
+    .rep-row { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 5px; }
+    .rep-pip {
+      width: 56px; height: 38px; border-radius: 4px;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      font-size: 9px; font-weight: 500; position: relative; gap: 1px;
+    }
+    .rl-alive { background: #eff6ff; color: #1e3a5f; border: 2px solid #3b82f6; }
+    .rl-down  { background: #fef2f2; color: #7f1d1d; border: 2px solid #dc2626; opacity: 0.6; }
+    .rf-alive { background: #f0fdf4; color: #14532d; border: 1.5px solid #4ade80; }
+    .rf-down  { background: #fef2f2; color: #7f1d1d; border: 1.5px solid #f87171; opacity: 0.6; }
+    .crown { position: absolute; top: -6px; left: 50%; transform: translateX(-50%); font-size: 9px; }
+    .tg-meta { font-size: 10px; color: var(--text-sec); line-height: 1.5; }
+
+    /* ── Utility colours ── */
+    .c-ok   { color: #16a34a; }
+    .c-warn { color: #d97706; }
+    .c-dead { color: #dc2626; }
+
+    hr.div { border: none; border-top: 1px solid var(--border); margin: 1rem 0; }
+    .section-title { font-size: 12px; font-weight: 600; color: var(--text-sec); margin-bottom: 8px; }
+    .hint { font-size: 11px; color: var(--text-ter); margin-bottom: 1rem; }
+    .reset-btn {
+      font-size: 11px; padding: 5px 12px; border-radius: var(--radius);
+      background: var(--bg-sec); border: 1px solid var(--border-sec);
+      cursor: pointer; color: var(--text-sec);
+    }
+    .reset-btn:hover { background: var(--bg); }
+
+    /* ── AZ rule box ── */
+    .az-rule-box {
+      border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 10px 14px; margin-bottom: 1rem;
+      font-size: 12px; line-height: 1.7;
+    }
+    .rule-ok   { background: #f0fdf4; border-color: #86efac; color: #14532d; }
+    .rule-warn { background: #fffbeb; border-color: #fcd34d; color: #78350f; }
+    .rule-dead { background: #fef2f2; border-color: #fca5a5; color: #7f1d1d; }
+
+    footer {
+      margin-top: 2rem; padding-top: 1rem;
+      border-top: 1px solid var(--border);
+      font-size: 11px; color: var(--text-ter);
+    }
+  </style>
+</head>
+<body>
+
+<h1>YugabyteDB Cluster Resiliency Simulator</h1>
+<p class="subtitle">Interactive tablet quorum &amp; fault tolerance explorer — RF3/RF5 · 1–3 AZs · node failure simulation</p>
+
+<div class="top-bar">
+  <div style="display:flex;align-items:center;gap:8px;">
+    <span class="slabel">Replication factor</span>
+    <div class="rf-toggle">
+      <button class="rf-btn a3" id="btn-rf3" onclick="setRF(3)">RF = 3</button>
+      <button class="rf-btn" id="btn-rf5" onclick="setRF(5)">RF = 5</button>
+    </div>
+  </div>
+  <div style="display:flex;align-items:center;gap:8px;">
+    <span class="slabel">Availability zones</span>
+    <div class="az-tabs" id="az-tabs"></div>
+  </div>
+  <div style="display:flex;align-items:center;gap:8px;">
+    <span class="slabel">Tablet groups</span>
+    <select id="tg-sel" onchange="tgCount=parseInt(this.value);render()">
+      <option value="6">6</option>
+      <option value="9">9</option>
+      <option value="12" selected>12</option>
+      <option value="18">18</option>
+      <option value="24">24</option>
+    </select>
+  </div>
+</div>
+
+<div class="az-cfg" id="az-cfg"></div>
+<div id="az-rule-box" class="az-rule-box rule-ok"></div>
+<div id="placement-note" class="placement-note"></div>
+
+<div class="legend">
+  <div class="leg"><div class="leg-box" style="background:#f0fdf4;border:1.5px solid #4ade80;"></div> TServer alive</div>
+  <div class="leg"><div class="leg-box" style="background:#eff6ff;border:2.5px solid #3b82f6;"></div> Master alive</div>
+  <div class="leg"><div class="leg-box" style="background:#fffbeb;border:2.5px solid #f59e0b;"></div> Master relocated</div>
+  <div class="leg"><div class="leg-box" style="background:#fef2f2;border:1.5px solid #f87171;opacity:0.6"></div> Node down</div>
+  <div class="leg" style="margin-left:6px;"><span>★ = tablet leader &nbsp;|&nbsp; AZ·N = replica location</span></div>
+</div>
+
+<p class="hint">Click any node to toggle it down/up. Tablet replicas are pinned — 1 per AZ, round-robin within each AZ. Watch the impact summary update in real time.</p>
+
+<div class="metrics-row" id="metrics-row"></div>
+<div id="verdict" class="verdict v-ok"></div>
+
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+  <div class="section-title" style="margin:0;">
+    Cluster topology
+    <span style="font-size:10px;font-weight:400;color:var(--text-ter);"> — number on node = tablets hosted</span>
+  </div>
+  <button class="reset-btn" onclick="resetNodes()">Reset all ↺</button>
+</div>
+<div class="topo" id="topo"></div>
+
+<hr class="div">
+<div class="section-title">Impact summary</div>
+<div class="impact-summary-row" id="impact-summary"></div>
+<div class="impact-grid" id="impact-grid"></div>
+
+<hr class="div">
+<div class="tg-section">
+  <div class="tg-title-row">
+    <div class="section-title" style="margin:0;" id="tg-title">Tablet groups</div>
+    <div class="tg-controls">
+      <button class="tg-filter-btn active" id="f-all"   onclick="setFilter('all')">All</button>
+      <button class="tg-filter-btn" id="f-ok"    onclick="setFilter('ok')">Healthy</button>
+      <button class="tg-filter-btn" id="f-under"  onclick="setFilter('under')">Under-rep</button>
+      <button class="tg-filter-btn" id="f-noldr"  onclick="setFilter('noldr')">Re-electing</button>
+      <button class="tg-filter-btn" id="f-lost"   onclick="setFilter('lost')">Quorum lost</button>
+    </div>
+  </div>
+  <div class="tg-grid" id="tg-grid"></div>
+</div>
+
+<footer>
+  YugabyteDB Resiliency Simulator · RF = Replication Factor · FT = Fault Tolerance = ⌊(RF−1)/2⌋ ·
+  Quorum = ⌈RF/2⌉ alive replicas · 1 replica per AZ (when AZs ≥ RF) ·
+  2 AZs = no AZ-level FT · 3 AZs = full AZ-level FT
+</footer>
+
+<script>
+// ─── State ──────────────────────────────────────────────────────────────────
+let RF = 3, numAZ = 3, tgCount = 12;
+let nodesPerAZ = { 1: 3, 2: 3, 3: 3 };
+let nodeDown = {};
+let tgFilter = 'all';
+let cachedGroups = [];
+
+// ─── Init helpers ────────────────────────────────────────────────────────────
+function setRF(r) {
+  RF = r;
+  document.getElementById('btn-rf3').className = 'rf-btn' + (r === 3 ? ' a3' : '');
+  document.getElementById('btn-rf5').className = 'rf-btn' + (r === 5 ? ' a5' : '');
+  nodeDown = {};
+  render();
+}
+function setAZ(n) {
+  numAZ = n;
+  nodeDown = {};
+  renderAZTabs();
+  renderAZCfg();
+  render();
+}
+function setFilter(f) {
+  tgFilter = f;
+  ['all','ok','under','noldr','lost'].forEach(x => {
+    const b = document.getElementById('f-' + x);
+    if (b) b.className = 'tg-filter-btn' + (f === x ? ' active' : '');
+  });
+  renderTG();
+}
+function renderAZTabs() {
+  document.getElementById('az-tabs').innerHTML = [1, 2, 3].map(i =>
+    `<button class="az-tab${numAZ === i ? ' active' : ''}" onclick="setAZ(${i})">${i} AZ${i > 1 ? 's' : ''}</button>`
+  ).join('');
+}
+function renderAZCfg() {
+  let h = '';
+  for (let az = 1; az <= numAZ; az++) {
+    const cur = nodesPerAZ[az] || 3;
+    h += `<div class="az-cfg-card">
+      <div class="az-cfg-label">AZ ${az}</div>
+      <select onchange="setAZN(${az}, this.value)">
+        ${[1,2,3,4,5,6,7,8,9].map(v => `<option value="${v}"${cur === v ? ' selected' : ''}>${v} node${v > 1 ? 's' : ''}</option>`).join('')}
+      </select>
+    </div>`;
+  }
+  h += `<div class="total-card">
+    <div class="az-cfg-label">Total nodes</div>
+    <div id="total-disp" style="font-size:18px;font-weight:600;">${totalNodes()}</div>
+  </div>`;
+  document.getElementById('az-cfg').innerHTML = h;
+}
+function setAZN(az, v) {
+  nodesPerAZ[az] = parseInt(v);
+  nodeDown = {};
+  const td = document.getElementById('total-disp');
+  if (td) td.textContent = totalNodes();
+  render();
+}
+function totalNodes() {
+  let t = 0;
+  for (let az = 1; az <= numAZ; az++) t += (nodesPerAZ[az] || 1);
+  return t;
+}
+function nid(az, n) { return `${az}_${n}`; }
+function toggleNode(id) { nodeDown[id] = !nodeDown[id]; render(); }
+function resetNodes() { nodeDown = {}; render(); }
+
+// ─── Masters ──────────────────────────────────────────────────────────────────
+function getInitialMasters() {
+  const list = [];
+  for (let i = 0; i < RF; i++) {
+    const az = (i % numAZ) + 1;
+    for (let n = 1; n <= (nodesPerAZ[az] || 1); n++) {
+      const id = nid(az, n);
+      if (!list.includes(id)) { list.push(id); break; }
+    }
+  }
+  return list;
+}
+function getEffectiveMasters(initial) {
+  const eff = [...initial];
+  for (let slot = 0; slot < eff.length; slot++) {
+    const orig = eff[slot];
+    if (!nodeDown[orig]) continue;
+    const occ = new Set(eff.filter((x, i) => i !== slot && x));
+    const origAZ = parseInt(orig.split('_')[0]);
+    let found = null;
+    // Same AZ first
+    for (let n = 1; n <= (nodesPerAZ[origAZ] || 1); n++) {
+      const id = nid(origAZ, n);
+      if (!nodeDown[id] && !occ.has(id)) { found = id; break; }
+    }
+    // Cross-AZ fallback
+    if (!found) {
+      for (let az = 1; az <= numAZ; az++) {
+        if (az === origAZ) continue;
+        for (let n = 1; n <= (nodesPerAZ[az] || 1); n++) {
+          const id = nid(az, n);
+          if (!nodeDown[id] && !occ.has(id)) { found = id; break; }
+        }
+        if (found) break;
+      }
+    }
+    eff[slot] = found;
+  }
+  return eff;
+}
+
+// ─── Tablet placement ─────────────────────────────────────────────────────────
+// Rule: tablet t, replica slot r → AZ = (r % numAZ)+1, node = (t + sameAZBefore) % nodesInAZ + 1
+// Guarantees: 1 replica per AZ when numAZ >= RF; round-robin tablets across nodes within each AZ.
+// Example 3 AZ × 3 nodes, 12 tablets:
+//   TG1: AZ1-N1, AZ2-N1, AZ3-N1
+//   TG2: AZ1-N2, AZ2-N2, AZ3-N2
+//   TG3: AZ1-N3, AZ2-N3, AZ3-N3
+//   TG4: AZ1-N1, AZ2-N1, AZ3-N1  (wraps)
+// Losing N1 from each AZ: TG1,4,7,10 each lose 1 replica → 2/3 alive → quorum(2) maintained ✓
+function buildTabletGroups() {
+  const groups = [];
+  for (let t = 0; t < tgCount; t++) {
+    const replicas = [];
+    for (let r = 0; r < RF; r++) {
+      const az = (r % numAZ) + 1;
+      const nodesInAZ = nodesPerAZ[az] || 1;
+      const sameAZBefore = replicas.filter(x => x.az === az).length;
+      const nodeIdx = (t + sameAZBefore) % nodesInAZ + 1;
+      replicas.push({ az, n: nodeIdx, id: nid(az, nodeIdx), isLeader: r === 0 });
+    }
+    groups.push({ id: t + 1, replicas });
+  }
+  return groups;
+}
+
+// ─── Classify ────────────────────────────────────────────────────────────────
+function classifyGroup(g) {
+  const QN = Math.ceil(RF / 2);
+  const aliveReps = g.replicas.filter(r => !nodeDown[r.id]);
+  const aliveCount = aliveReps.length;
+  const hasQuorum = aliveCount >= QN;
+  const origLeader = g.replicas.find(r => r.isLeader);
+  const origLeaderAlive = origLeader && !nodeDown[origLeader.id];
+  const effectiveLeader = origLeaderAlive ? origLeader : (aliveReps.length > 0 ? aliveReps[0] : null);
+  if (!hasQuorum) return { status: 'lost', aliveCount, effectiveLeader: null };
+  if (!origLeaderAlive) return { status: 'noldr', aliveCount, effectiveLeader };
+  if (aliveCount < RF) return { status: 'under', aliveCount, effectiveLeader };
+  return { status: 'ok', aliveCount, effectiveLeader };
+}
+
+function countTabletsPerNode() {
+  const map = {};
+  buildTabletGroups().forEach(g => g.replicas.forEach(r => { map[r.id] = (map[r.id] || 0) + 1; }));
+  return map;
+}
+
+// ─── AZ survival (corrected) ─────────────────────────────────────────────────
+// 1 AZ  → never survive AZ loss
+// 2 AZs → never survive AZ loss (both required at all times)
+// 3 AZs → survive losing 1 AZ if: nodesLost <= FT AND remaining >= QN for each possible lost AZ
+function canSurviveAZLoss(dist, azCount) {
+  if (azCount <= 2) return false;
+  const FT = Math.floor((RF - 1) / 2);
+  const QN = Math.ceil(RF / 2);
+  for (let i = 0; i < dist.length; i++) {
+    const lost = dist[i];
+    const remain = dist.reduce((s, v, j) => j !== i ? s + v : s, 0);
+    if (lost > FT || remain < QN) return false;
+  }
+  return true;
+}
+
+// ─── Main render ─────────────────────────────────────────────────────────────
+function render() {
+  if (!document.getElementById('az-tabs').innerHTML) { renderAZTabs(); renderAZCfg(); }
+
+  const total = totalNodes();
+  const dist = [];
+  for (let az = 1; az <= numAZ; az++) dist.push(nodesPerAZ[az] || 1);
+
+  const initial = getInitialMasters();
+  const masters = getEffectiveMasters(initial);
+  const initialSet = new Set(initial);
+  const effectiveSet = new Set(masters.filter(x => x));
+  const movedSet = new Set(masters.filter((x, i) => x && x !== initial[i]));
+
+  let aliveCount = 0, downCount = 0;
+  for (let az = 1; az <= numAZ; az++)
+    for (let n = 1; n <= (nodesPerAZ[az] || 1); n++) {
+      if (nodeDown[nid(az, n)]) downCount++; else aliveCount++;
+    }
+
+  const FT = Math.floor((RF - 1) / 2);
+  const QN = Math.ceil(RF / 2);
+  const masterAlive = masters.filter(x => x && !nodeDown[x]).length;
+  const masterNeed  = Math.ceil(RF / 2);
+  const viable = total >= RF;
+  const masterQuorum = masterAlive >= masterNeed;
+
+  const azFullyDown = [];
+  for (let az = 1; az <= numAZ; az++) {
+    let a = 0;
+    for (let n = 1; n <= (nodesPerAZ[az] || 1); n++) if (!nodeDown[nid(az, n)]) a++;
+    if (a === 0) azFullyDown.push(az);
+  }
+
+  // AZ rule box
+  const ruleBox = document.getElementById('az-rule-box');
+  if (numAZ === 1) {
+    ruleBox.className = 'az-rule-box rule-dead';
+    ruleBox.innerHTML = `<strong>1 AZ — no AZ-level fault tolerance.</strong> A full AZ outage = total cluster loss. Node-level FT only: survives ${FT} node failure(s). Dev/test only.`;
+  } else if (numAZ === 2) {
+    ruleBox.className = 'az-rule-box rule-warn';
+    ruleBox.innerHTML = `<strong>2 AZs — cannot survive a full AZ outage.</strong> RF=${RF} replicas span both AZs. Losing either AZ removes enough replicas to break quorum — <strong>both AZs must be alive at all times.</strong> Use 3 AZs for true AZ-level fault tolerance.`;
+  } else {
+    const azFTOk = canSurviveAZLoss(dist, numAZ);
+    ruleBox.className = 'az-rule-box rule-ok';
+    ruleBox.innerHTML = `<strong>3 AZs — ${azFTOk ? 'full AZ-level fault tolerance active.' : 'limited — uneven distribution.'}</strong> ${azFTOk ? `Losing any single AZ keeps remaining 2 AZs with ≥${QN}/${RF} replicas. RTO ~3s, RPO=0.` : `Current distribution (${dist.join('+')}) means losing the largest AZ may exceed FT=${FT}. Balance nodes across AZs.`}`;
+  }
+
+  // Placement note
+  const pnEl = document.getElementById('placement-note');
+  if (numAZ >= RF) {
+    const eg = [];
+    for (let az = 1; az <= numAZ; az++) {
+      const nn = nodesPerAZ[az] || 1;
+      eg.push(`AZ${az}: ${nn} node${nn > 1 ? 's' : ''} → ~${Math.ceil(tgCount / nn)} tablets/node`);
+    }
+    pnEl.innerHTML = `<strong>Placement: 1 replica per AZ, round-robin within AZ.</strong> ${eg.join(' &nbsp;|&nbsp; ')}<br>Losing 1 node per AZ = 1 replica lost per tablet → ${QN}/${RF} still alive → quorum maintained ✓`;
+  } else {
+    pnEl.innerHTML = `<strong>Placement: ${numAZ} AZs &lt; RF=${RF} — AZ1 holds multiple replicas per tablet.</strong> Losing AZ1 removes 2 replicas per tablet → exceeds FT=${FT} → quorum lost for all tablets.`;
+  }
+
+  // Build + classify groups
+  cachedGroups = buildTabletGroups().map(g => ({ ...g, cls: classifyGroup(g) }));
+  const cntOk    = cachedGroups.filter(g => g.cls.status === 'ok').length;
+  const cntUnder = cachedGroups.filter(g => g.cls.status === 'under').length;
+  const cntNoldr = cachedGroups.filter(g => g.cls.status === 'noldr').length;
+  const cntLost  = cachedGroups.filter(g => g.cls.status === 'lost').length;
+  const headroom = Math.max(0, aliveCount - QN);
+
+  // Metrics
+  const hc = headroom === 0 ? 'c-dead' : headroom === 1 ? 'c-warn' : 'c-ok';
+  document.getElementById('metrics-row').innerHTML = `
+    <div class="met"><div class="met-label">Total nodes</div><div class="met-val">${total}</div></div>
+    <div class="met"><div class="met-label">Alive</div><div class="met-val c-ok">${aliveCount}</div></div>
+    <div class="met"><div class="met-label">Down</div><div class="met-val ${downCount ? 'c-dead' : 'c-ok'}">${downCount}</div></div>
+    <div class="met"><div class="met-label">Masters</div><div class="met-val ${masterQuorum ? 'c-ok' : 'c-dead'}">${masterAlive}/${RF}</div></div>
+    <div class="met"><div class="met-label">Node FT</div><div class="met-val c-warn">${viable ? FT : '—'}</div></div>
+    <div class="met"><div class="met-label">Headroom</div><div class="met-val ${hc}">${viable ? headroom : '—'}</div></div>
+    <div class="met"><div class="met-label">TG healthy</div><div class="met-val c-ok">${cntOk}</div></div>
+    <div class="met"><div class="met-label">TG under-rep</div><div class="met-val c-warn">${cntUnder + cntNoldr}</div></div>
+    <div class="met"><div class="met-label">TG lost</div><div class="met-val ${cntLost ? 'c-dead' : 'c-ok'}">${cntLost}</div></div>
+  `;
+
+  // Verdict
+  const vEl = document.getElementById('verdict');
+  if (!viable) {
+    vEl.className = 'verdict v-dead';
+    vEl.innerHTML = `<strong>✗ Cannot deploy</strong> — RF=${RF} needs ≥${RF} nodes. Have ${total}.`;
+  } else if (!masterQuorum) {
+    vEl.className = 'verdict v-dead';
+    vEl.innerHTML = `<strong>✗ Master quorum lost</strong> — ${masterAlive}/${RF} masters alive, need ≥${masterNeed}. Cluster unavailable.`;
+  } else if (cntLost === tgCount) {
+    vEl.className = 'verdict v-dead';
+    vEl.innerHTML = `<strong>✗ Full cluster impact</strong> — All ${tgCount} tablet groups lost quorum. Cluster unavailable. Restore nodes immediately.`;
+  } else if (cntLost > 0) {
+    vEl.className = 'verdict v-dead';
+    vEl.innerHTML = `<strong>✗ Partial quorum loss</strong> — ${cntLost}/${tgCount} tablet groups lost quorum — those rows are unavailable. ${cntOk + cntUnder + cntNoldr} groups still serving.`;
+  } else if (cntNoldr > 0 || cntUnder > 0) {
+    vEl.className = 'verdict v-warn';
+    vEl.innerHTML = `<strong>⚠ Degraded — partial impact only.</strong> All ${tgCount} tablet groups have quorum — reads &amp; writes continue. ${cntNoldr} re-electing leader (~3s RTO, RPO=0). ${cntUnder} under-replicated. ${headroom} more failure(s) tolerable.`;
+  } else if (headroom === 0) {
+    vEl.className = 'verdict v-warn';
+    vEl.innerHTML = `<strong>⚠ Healthy — zero headroom.</strong> All ${tgCount} groups fully replicated and serving. Any further failure will cause under-replication or quorum loss.`;
+  } else {
+    vEl.className = 'verdict v-ok';
+    vEl.innerHTML = `<strong>✓ Fully healthy.</strong> All ${tgCount} tablet groups: ${RF}/${RF} replicas alive, leaders active. Can tolerate ${headroom} more node failure(s).`;
+  }
+
+  // Topology
+  const tabletCounts = countTabletsPerNode();
+  let topoH = '';
+  for (let az = 1; az <= numAZ; az++) {
+    const azAlive = Array.from({ length: nodesPerAZ[az] || 1 }, (_, i) => nid(az, i + 1)).filter(id => !nodeDown[id]).length;
+    const azDead = azAlive === 0;
+    topoH += `<div class="az-col${azDead ? ' az-dead' : ''}">
+      <div class="az-col-title">
+        <span>AZ ${az}</span>
+        <span style="font-size:10px;color:${azDead ? '#dc2626' : 'var(--text-sec)'}">
+          ${azDead ? 'OUTAGE' : azAlive + '/' + (nodesPerAZ[az] || 1) + ' up'}
+        </span>
+      </div>
+      <div class="nodes-grid">`;
+    for (let n = 1; n <= (nodesPerAZ[az] || 1); n++) {
+      const id = nid(az, n);
+      const isDown = !!nodeDown[id];
+      const isInit = initialSet.has(id);
+      const isEff  = effectiveSet.has(id);
+      const isMov  = movedSet.has(id);
+      let cls = '';
+      if (isMov)              cls = isDown ? 'm-down' : 'm-moved';
+      else if (isInit && isEff) cls = isDown ? 'm-down' : 'm-alive';
+      else if (isInit && !isEff) cls = 'm-down';
+      else                    cls = isDown ? 'ts-down' : 'ts-alive';
+      let badge = '';
+      if (isInit && !isMov && !isDown) badge = `<span class="mbadge mbadge-orig">M</span>`;
+      else if (isInit && !isMov && isDown) badge = `<span class="mbadge mbadge-orig" style="opacity:0.5">M</span>`;
+      else if (isMov && !isDown)       badge = `<span class="mbadge mbadge-moved">M↑</span>`;
+      const tc = tabletCounts[id] || 0;
+      topoH += `<div class="node-pill ${cls}" onclick="toggleNode('${id}')" title="AZ${az} N${n} — ${tc} tablets — click to ${isDown ? 'restore' : 'bring down'}">
+        ${badge}
+        <span class="node-icon">${isDown ? '✗' : (isInit || isMov) ? '◈' : '◉'}</span>
+        <span class="node-lbl">${az}.${n}</span>
+        <span class="node-tcount">${tc}t</span>
+      </div>`;
+    }
+    topoH += `</div></div>`;
+  }
+  document.getElementById('topo').innerHTML = topoH;
+
+  // Impact summary
+  document.getElementById('impact-summary').innerHTML = `
+    <div class="imp-met i-ok"><div class="imp-met-label">Fully healthy</div><div class="imp-met-val c-ok">${cntOk}</div></div>
+    <div class="imp-met i-under"><div class="imp-met-label">Under-replicated</div><div class="imp-met-val c-warn">${cntUnder}</div></div>
+    <div class="imp-met i-noldr"><div class="imp-met-label">Leader re-electing</div><div class="imp-met-val c-warn">${cntNoldr}</div></div>
+    <div class="imp-met i-lost"><div class="imp-met-label">Quorum lost</div><div class="imp-met-val c-dead">${cntLost}</div></div>
+  `;
+
+  const pct = n => tgCount > 0 ? Math.round(n / tgCount * 100) : 0;
+  document.getElementById('impact-grid').innerHTML = `
+    <div class="impact-card">
+      <div class="impact-card-title" style="color:#16a34a">Partial impact — still serving</div>
+      <div class="impact-bar-row">
+        <span class="impact-bar-label">Healthy (full RF)</span>
+        <div class="impact-bar-wrap"><div class="impact-bar-fill" style="width:${pct(cntOk)}%;background:#22c55e"></div></div>
+        <span class="impact-count c-ok">${cntOk} (${pct(cntOk)}%)</span>
+      </div>
+      <div class="impact-bar-row">
+        <span class="impact-bar-label">Under-replicated</span>
+        <div class="impact-bar-wrap"><div class="impact-bar-fill" style="width:${pct(cntUnder)}%;background:#f59e0b"></div></div>
+        <span class="impact-count c-warn">${cntUnder} (${pct(cntUnder)}%)</span>
+      </div>
+      <div class="impact-bar-row">
+        <span class="impact-bar-label">Leader re-electing</span>
+        <div class="impact-bar-wrap"><div class="impact-bar-fill" style="width:${pct(cntNoldr)}%;background:#d97706"></div></div>
+        <span class="impact-count c-warn">${cntNoldr} (${pct(cntNoldr)}%)</span>
+      </div>
+      <div style="font-size:10px;color:var(--text-ter);margin-top:6px;">Quorum met → reads &amp; writes continue. Under-replicated = ${RF-1}/${RF} replicas alive. Leader re-election ~3s RTO, RPO=0.</div>
+    </div>
+    <div class="impact-card">
+      <div class="impact-card-title" style="color:#dc2626">Full impact — rows unavailable</div>
+      <div class="impact-bar-row">
+        <span class="impact-bar-label">Quorum lost</span>
+        <div class="impact-bar-wrap"><div class="impact-bar-fill" style="width:${pct(cntLost)}%;background:#ef4444"></div></div>
+        <span class="impact-count c-dead">${cntLost} (${pct(cntLost)}%)</span>
+      </div>
+      <div class="impact-bar-row">
+        <span class="impact-bar-label">Still available</span>
+        <div class="impact-bar-wrap"><div class="impact-bar-fill" style="width:${pct(tgCount - cntLost)}%;background:#22c55e"></div></div>
+        <span class="impact-count c-ok">${tgCount - cntLost} (${pct(tgCount - cntLost)}%)</span>
+      </div>
+      <div style="font-size:10px;color:var(--text-ter);margin-top:6px;">Quorum lost = alive replicas &lt; ${QN}/${RF}. Rows in these groups unavailable for reads &amp; writes until nodes restored.</div>
+    </div>
+  `;
+
+  document.getElementById('tg-title').textContent = `Tablet groups (${tgCount} total, RF=${RF})`;
+  renderTG();
+}
+
+// ─── Tablet group cards ───────────────────────────────────────────────────────
+function renderTG() {
+  const QN = Math.ceil(RF / 2);
+  const filtered = cachedGroups.filter(g => {
+    if (tgFilter === 'all')   return true;
+    if (tgFilter === 'ok')    return g.cls.status === 'ok';
+    if (tgFilter === 'under') return g.cls.status === 'under';
+    if (tgFilter === 'noldr') return g.cls.status === 'noldr';
+    if (tgFilter === 'lost')  return g.cls.status === 'lost';
+    return true;
+  });
+  if (!filtered.length) {
+    document.getElementById('tg-grid').innerHTML = `<div style="font-size:12px;color:var(--text-sec);padding:8px;">No tablet groups match this filter.</div>`;
+    return;
+  }
+  const statusLabels = { ok: 'Healthy', under: 'Under-replicated', noldr: 'Leader re-electing', lost: 'Quorum lost' };
+  document.getElementById('tg-grid').innerHTML = filtered.map(g => {
+    const { status, aliveCount, effectiveLeader } = g.cls;
+    const repsHtml = g.replicas.map(r => {
+      const isDown = !!nodeDown[r.id];
+      const isEffLeader = effectiveLeader && r.id === effectiveLeader.id && !isDown;
+      let cls = 'rep-pip ';
+      cls += isEffLeader ? (isDown ? 'rl-down' : 'rl-alive') : (isDown ? 'rf-down' : 'rf-alive');
+      const crown = isEffLeader ? `<span class="crown">★</span>` : '';
+      const roleStr = isEffLeader ? 'ldr' : (r.isLeader && isDown ? 'ldr↓' : 'flw');
+      return `<div class="${cls}" title="AZ${r.az} N${r.n} — ${roleStr}${isDown ? ' DOWN' : ''}">
+        ${crown}
+        <span style="font-size:9px;font-weight:500">AZ${r.az}·N${r.n}</span>
+        <span style="font-size:8px;opacity:0.75">${roleStr}</span>
+      </div>`;
+    }).join('');
+    const metaMap = {
+      ok:    `${aliveCount}/${RF} replicas alive. Leader active. Fully protected.`,
+      under: `${aliveCount}/${RF} replicas alive. Quorum met (≥${QN}). Reads &amp; writes continue. At risk if one more replica fails.`,
+      noldr: `${aliveCount}/${RF} alive. Original leader node down — new leader elected (~3s RTO, RPO=0).`,
+      lost:  `Only ${aliveCount}/${RF} replicas alive — need ≥${QN}. Rows in this group unavailable.`
+    };
+    return `<div class="tg-card s-${status}">
+      <div class="tg-header">
+        <span class="tg-name">Tablet group ${g.id}</span>
+        <span class="tg-stag stag-${status}">${statusLabels[status]}</span>
+      </div>
+      <div class="rep-row">${repsHtml}</div>
+      <div class="tg-meta">${metaMap[status]}</div>
+    </div>`;
+  }).join('');
+}
+
+// ─── Boot ────────────────────────────────────────────────────────────────────
+renderAZTabs();
+renderAZCfg();
+render();
+</script>
+</body>
+</html>
